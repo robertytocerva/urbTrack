@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: urbtrack
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 0
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 600000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    url: ${DB_MIGRATION_URL:${DB_URL}}
+    user: ${DB_USER}
+    password: ${DB_PASSWORD}
+    locations: classpath:db/migration
+  jackson:
+    time-zone: UTC
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    org.flywaydb.core: WARN
+    org.hibernate.orm.connections.pooling: WARN
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration-minutes: 60
