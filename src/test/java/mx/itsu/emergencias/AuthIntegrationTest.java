@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
+import mx.itsu.emergencias.dispatch.service.DispatchExpirationScheduler;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.ActiveProfiles;
@@ -20,6 +21,13 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -48,6 +56,9 @@ class AuthIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private DispatchExpirationScheduler dispatchExpirationScheduler;
 
     @Test
     void flywayAppliesVersionOneSchema() {
@@ -198,6 +209,161 @@ class AuthIntegrationTest {
                 "select count(*) from unit_location_history where event_id = ?", Integer.class, mustNotPersist));
     }
 
+    @Test
+    void concurrentDispatchAcceptanceHasExactlyOneWinnerAndCompletesAlertLifecycle() throws Exception {
+        double latitude = -40.0;
+        double longitude = 80.0;
+        List<UnitAccount> units = List.of(
+                registerAvailableUnit("POLICE", latitude, longitude),
+                registerAvailableUnit("POLICE", latitude, longitude),
+                registerAvailableUnit("POLICE", latitude, longitude));
+        String citizenToken = registerCitizenAndLogin();
+        HttpResponse<String> created = createAlert(citizenToken, "ROBBERY", latitude, longitude);
+        assertEquals(201, created.statusCode(), created.body());
+        UUID alertId = UUID.fromString(jsonValue(created.body(), "id"));
+        assertTrue(created.body().contains("\"requiredUnitType\":\"POLICE\""));
+
+        HttpResponse<String> alreadyActive = createAlert(citizenToken, "FIRE", latitude, longitude);
+        assertEquals(409, alreadyActive.statusCode());
+        assertTrue(alreadyActive.body().contains("\"code\":\"ACTIVE_ALERT_EXISTS\""));
+
+        List<String> dispatchIds = new ArrayList<>();
+        for (UnitAccount unit : units) {
+            HttpResponse<String> pending = request("GET", "/api/dispatches/pending", null, unit.token());
+            assertEquals(200, pending.statusCode());
+            Matcher matcher = Pattern.compile("\\\"dispatchId\\\":\\\"([^\\\"]+)\\\"").matcher(pending.body());
+            assertTrue(matcher.find(), "Cada unidad debe tener una oferta pendiente");
+            dispatchIds.add(matcher.group(1));
+        }
+
+        ExecutorService pool = Executors.newFixedThreadPool(units.size());
+        CountDownLatch ready = new CountDownLatch(units.size());
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Integer>> outcomes = new ArrayList<>();
+        try {
+            for (int index = 0; index < units.size(); index++) {
+                UnitAccount unit = units.get(index);
+                String dispatchId = dispatchIds.get(index);
+                outcomes.add(pool.submit(() -> {
+                    ready.countDown();
+                    if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("barrier timeout");
+                    return request("POST", "/api/dispatches/" + dispatchId + "/accept", null,
+                            unit.token()).statusCode();
+                }));
+            }
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            List<Integer> statuses = new ArrayList<>();
+            for (Future<Integer> outcome : outcomes) statuses.add(outcome.get(20, TimeUnit.SECONDS));
+            assertEquals(1, statuses.stream().filter(status -> status == 200).count());
+            assertEquals(2, statuses.stream().filter(status -> status == 409).count());
+
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "select count(*) from alerts where id = ? and status = 'EN_ROUTE'", Integer.class, alertId));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "select count(*) from alert_dispatches where alert_id = ? and status = 'ACCEPTED'",
+                    Integer.class, alertId));
+            assertEquals(2, jdbcTemplate.queryForObject(
+                    "select count(*) from alert_dispatches where alert_id = ? and status = 'CANCELLED'",
+                    Integer.class, alertId));
+
+            int winner = statuses.indexOf(200);
+            String winningToken = units.get(winner).token();
+            HttpResponse<String> active = request("GET", "/api/alerts/active", null, citizenToken);
+            assertEquals(200, active.statusCode());
+            assertTrue(active.body().contains("\"status\":\"EN_ROUTE\""));
+
+            HttpResponse<String> arrived = request("POST", "/api/alerts/" + alertId + "/arrive", null,
+                    winningToken);
+            assertEquals(200, arrived.statusCode());
+            assertTrue(arrived.body().contains("\"status\":\"ON_SCENE\""));
+            HttpResponse<String> resolved = request("POST", "/api/alerts/" + alertId + "/resolve", null,
+                    winningToken);
+            assertEquals(200, resolved.statusCode());
+            assertTrue(resolved.body().contains("\"status\":\"RESOLVED\""));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "select count(*) from alert_events where alert_id = ? and event_type = 'ALERT_ACCEPTED'",
+                    Integer.class, alertId));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "select count(*) from alert_events where alert_id = ? and event_type = 'ALERT_ARRIVED'",
+                    Integer.class, alertId));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "select count(*) from alert_events where alert_id = ? and event_type = 'ALERT_RESOLVED'",
+                    Integer.class, alertId));
+            assertEquals(1, jdbcTemplate.queryForObject(
+                    "select count(*) from units where id = ? and status = 'AVAILABLE'", Integer.class,
+                    UUID.fromString(jsonValue(resolved.body(), "unitId"))));
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void dispatchExpandsRadiusAfterRejectionAndScheduledExpirationExpiresAlert() throws Exception {
+        double alertLatitude = 70.0;
+        double alertLongitude = 140.0;
+        UnitAccount fireUnit = registerAvailableUnit("FIRE", 70.05, alertLongitude);
+        String citizenToken = registerCitizenAndLogin();
+        HttpResponse<String> created = createAlert(citizenToken, "FIRE", alertLatitude, alertLongitude);
+        assertEquals(201, created.statusCode());
+        UUID alertId = UUID.fromString(jsonValue(created.body(), "id"));
+        assertTrue(created.body().contains("\"dispatchRound\":2"));
+
+        HttpResponse<String> pending = request("GET", "/api/dispatches/pending", null, fireUnit.token());
+        String dispatchId = jsonValue(pending.body(), "dispatchId");
+        HttpResponse<String> rejected = request("POST", "/api/dispatches/" + dispatchId + "/reject", null,
+                fireUnit.token());
+        assertEquals(200, rejected.statusCode());
+        assertTrue(rejected.body().contains("\"status\":\"REJECTED\""));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "select count(*) from alerts where id = ? and status = 'EXPIRED' and dispatch_round = 3",
+                Integer.class, alertId));
+
+        double secondLat = 45.0;
+        double secondLon = 45.0;
+        UnitAccount policeUnit = registerAvailableUnit("POLICE", secondLat, secondLon);
+        HttpResponse<String> secondAlert = createAlert(citizenToken, "ROBBERY", secondLat, secondLon);
+        assertEquals(201, secondAlert.statusCode());
+        UUID secondAlertId = UUID.fromString(jsonValue(secondAlert.body(), "id"));
+        HttpResponse<String> secondPending = request("GET", "/api/dispatches/pending", null, policeUnit.token());
+        String secondDispatchId = jsonValue(secondPending.body(), "dispatchId");
+        jdbcTemplate.update("update alert_dispatches set expires_at = now() - interval '1 second' where id = ?",
+                UUID.fromString(secondDispatchId));
+        dispatchExpirationScheduler.expireAndAdvance();
+
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "select count(*) from alert_dispatches where id = ? and status = 'EXPIRED'",
+                Integer.class, UUID.fromString(secondDispatchId)));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "select count(*) from alerts where id = ? and status = 'EXPIRED'",
+                Integer.class, secondAlertId));
+    }
+
+    @Test
+    void citizenCanCancelPendingAlertAndRequiredUnitTypeMappingIsApplied() throws Exception {
+        UnitAccount civilUnit = registerAvailableUnit("CIVIL_PROTECTION", 55.0, 20.0);
+        String citizenToken = registerCitizenAndLogin();
+        HttpResponse<String> created = createAlert(citizenToken, "OTHER", 55.0, 20.0);
+        assertEquals(201, created.statusCode());
+        assertTrue(created.body().contains("\"requiredUnitType\":\"CIVIL_PROTECTION\""));
+        UUID alertId = UUID.fromString(jsonValue(created.body(), "id"));
+
+        HttpResponse<String> forbidden = request("POST", "/api/alerts/" + alertId + "/cancel", null,
+                civilUnit.token());
+        assertEquals(403, forbidden.statusCode());
+
+        HttpResponse<String> cancelled = request("POST", "/api/alerts/" + alertId + "/cancel", null,
+                citizenToken);
+        assertEquals(200, cancelled.statusCode());
+        assertTrue(cancelled.body().contains("\"status\":\"CANCELLED\""));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "select count(*) from alert_dispatches where alert_id = ? and status = 'CANCELLED'",
+                Integer.class, alertId));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "select count(*) from alert_events where alert_id = ? and event_type = 'ALERT_CANCELLED'",
+                Integer.class, alertId));
+    }
+
     private UnitAccount registerUnitAndLogin() throws Exception {
         String email = "phase2-unit-" + UUID.randomUUID() + "@example.com";
         HttpResponse<String> registration = request("POST", "/api/auth/register/unit", """
@@ -225,6 +391,41 @@ class AuthIntegrationTest {
                 """.formatted(email), null);
         assertEquals(200, login.statusCode());
         return extractToken(login.body());
+    }
+
+    private UnitAccount registerAvailableUnit(String type, double latitude, double longitude) throws Exception {
+        String email = "phase3-unit-" + UUID.randomUUID() + "@example.com";
+        String identifier = "P3-" + UUID.randomUUID();
+        HttpResponse<String> registration = request("POST", "/api/auth/register/unit", """
+                {"email":"%s","password":"Secreto123!","fullName":"Unidad para alertas","unitType":"%s","identifier":"%s"}
+                """.formatted(email, type, identifier), null);
+        assertEquals(201, registration.statusCode(), registration.body());
+        UUID unitId = UUID.fromString(jsonValue(registration.body(), "unitId"));
+        HttpResponse<String> login = request("POST", "/api/auth/login", """
+                {"email":"%s","password":"Secreto123!"}
+                """.formatted(email), null);
+        assertEquals(200, login.statusCode());
+        String token = extractToken(login.body());
+        assertEquals(200, request("PUT", "/api/units/me/status", "{\"status\":\"AVAILABLE\"}", token)
+                .statusCode());
+        assertEquals(200, request("POST", "/api/units/me/location",
+                locationJson(UUID.randomUUID(), latitude, longitude, Instant.now().minusSeconds(5)), token)
+                .statusCode());
+        return new UnitAccount(unitId, token);
+    }
+
+    private HttpResponse<String> createAlert(String citizenToken, String type, double latitude, double longitude)
+            throws Exception {
+        return request("POST", "/api/alerts", """
+                {"type":"%s","description":"Alerta de prueba","latitude":%s,"longitude":%s}
+                """.formatted(type, latitude, longitude), citizenToken);
+    }
+
+    private String jsonValue(String body, String field) {
+        Matcher matcher = Pattern.compile("\\\"" + Pattern.quote(field) + "\\\":\\\"([^\\\"]+)\\\"")
+                .matcher(body);
+        assertTrue(matcher.find(), "La respuesta debe incluir " + field + ": " + body);
+        return matcher.group(1);
     }
 
     private String extractToken(String body) {

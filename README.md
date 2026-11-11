@@ -22,6 +22,7 @@ La aplicación ejecuta Flyway al arrancar y Hibernate valida el esquema existent
 
 ## Pendientes
 
-- Fase 3: alertas, rondas de despacho, aceptación atómica y transiciones de estado.
-- Fase 4: WebSocket/STOMP y publicación de eventos de tracking en tiempo real.
+- Fase 4: WebSocket/STOMP y publicación de eventos de tracking/notificación en tiempo real.
+- Fase 5: ruta OSRM opcional.
+- Fase 6: OpenAPI, colección Postman y utilidades de simulación.
 - Las ubicaciones se persisten desde Fase 2; la emisión de notificaciones en tiempo real queda para Fase 4.

@@ -43,6 +43,10 @@ app:
     secret: ${JWT_SECRET}
     expiration-minutes: 60
   dispatch:
+    offers-per-round: 3
+    offer-ttl-seconds: 30
+    radius-km-rounds: [5, 10, 20]
     location-max-age-seconds: 120
+    expiration-scan-ms: 5000
   location:
     max-future-seconds: 60

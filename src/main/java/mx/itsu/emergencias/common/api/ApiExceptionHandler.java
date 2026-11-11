@@ -1,6 +1,7 @@
 package mx.itsu.emergencias.common.api;
 
 import mx.itsu.emergencias.common.exception.ConflictException;
+import mx.itsu.emergencias.common.exception.ForbiddenException;
 import mx.itsu.emergencias.common.exception.InvalidRequestException;
 import mx.itsu.emergencias.common.exception.NotFoundException;
 import org.hibernate.exception.ConstraintViolationException;
@@ -31,6 +32,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler(InvalidRequestException.class)
     ResponseEntity<ApiError> invalidRequest(InvalidRequestException exception, HttpServletRequest request) {
         return error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    ResponseEntity<ApiError> forbidden(ForbiddenException exception, HttpServletRequest request) {
+        return error(HttpStatus.FORBIDDEN, "FORBIDDEN", exception.getMessage(), request);
     }
 
     @ExceptionHandler({MissingServletRequestParameterException.class, MethodArgumentTypeMismatchException.class})
@@ -81,6 +87,12 @@ public class ApiExceptionHandler {
         if (constraint != null && constraint.contains("email")) {
             return error(HttpStatus.CONFLICT, "EMAIL_ALREADY_EXISTS", "El correo ya está registrado", request);
         }
+        if (constraint != null && constraint.equals("uq_alerts_active_citizen")) {
+            return error(HttpStatus.CONFLICT, "ACTIVE_ALERT_EXISTS", "El ciudadano ya tiene una alerta activa", request);
+        }
+        if (constraint != null && constraint.equals("uq_alerts_active_unit")) {
+            return error(HttpStatus.CONFLICT, "UNIT_ALREADY_ASSIGNED", "La unidad ya atiende otra alerta", request);
+        }
         return error(HttpStatus.CONFLICT, "DATA_CONFLICT", "La operación entra en conflicto con datos existentes", request);
     }
 
@@ -107,6 +119,8 @@ public class ApiExceptionHandler {
         String message = rootCause.getMessage();
         if (message != null && message.contains("uq_users_email")) return "uq_users_email";
         if (message != null && message.contains("uq_units_identifier")) return "uq_units_identifier";
+        if (message != null && message.contains("uq_alerts_active_citizen")) return "uq_alerts_active_citizen";
+        if (message != null && message.contains("uq_alerts_active_unit")) return "uq_alerts_active_unit";
         return null;
     }
 }

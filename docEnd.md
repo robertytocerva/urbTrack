@@ -30,6 +30,12 @@
 | 409 | `UNIT_IDENTIFIER_EXISTS` | El identificador de unidad ya está registrado. |
 | 409 | `DATA_CONFLICT` | Conflicto con otra restricción de integridad. |
 | 409 | `UNIT_BUSY` | Una unidad ocupada no puede cambiar su estado manualmente. |
+| 409 | `ACTIVE_ALERT_EXISTS` | El ciudadano ya tiene una alerta activa. |
+| 409 | `INVALID_ALERT_TRANSITION` | La transición de estado solicitada no está permitida. |
+| 409 | `ALERT_ALREADY_ASSIGNED` | La alerta ya fue tomada o dejó de estar pendiente. |
+| 409 | `DISPATCH_NOT_OFFERED` | La oferta ya expiró, fue respondida o cancelada. |
+| 409 | `UNIT_NOT_AVAILABLE` | La unidad dejó de estar disponible para aceptar. |
+| 409 | `UNIT_ALREADY_ASSIGNED` | La unidad ya tiene una alerta activa. |
 | 405 | `METHOD_NOT_ALLOWED` | Método HTTP no permitido para la ruta. |
 | 500 | `INTERNAL_ERROR` | Error inesperado. |
 
@@ -46,7 +52,15 @@
 - `PUT /api/units/me/status`
 - `POST /api/units/me/location`
 - `POST /api/units/me/locations/batch`
-- Alertas y despacho: sin endpoints implementados todavía (Fase 3 en adelante).
+- `POST /api/alerts`
+- `GET /api/alerts/active`
+- `POST /api/alerts/{id}/cancel`
+- `POST /api/alerts/{id}/arrive`
+- `POST /api/alerts/{id}/resolve`
+- `GET /api/dispatches/pending`
+- `POST /api/dispatches/{id}/accept`
+- `POST /api/dispatches/{id}/reject`
+- Ruta de alerta: sin endpoint implementado todavía (Fase 5).
 
 ### Operación
 - `GET /actuator/health`
@@ -462,6 +476,375 @@ curl -X POST "$BASE_URL/api/units/me/locations/batch" \
   -d '[{"eventId":"7e498979-f108-4a4d-86b3-b4f9f0c81e80","latitude":19.4167,"longitude":-102.0667,"recordedAt":"2026-11-09T18:00:00Z"}]'
 ```
 
+### POST /api/alerts
+
+**Descripción:** Crea una alerta `PENDING`, determina el tipo de unidad requerido y comienza el despacho por rondas: radios de 5, 10 y 20 km, hasta 3 ofertas por ronda y expiración de cada oferta a los 30 segundos. Solo considera unidades disponibles con ubicación recibida en los últimos 120 segundos. Si una ronda no encuentra unidades, se intenta la siguiente inmediatamente; sin unidades tras la última, la alerta expira.
+**Rol requerido:** `CITIZEN`.
+**Estado:** Implementado (Fase 3).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+| Content-Type | `application/json` |
+
+**Parámetros de ruta / query:** Ninguno.
+
+**Body**
+```json
+{
+  "type": "ROBBERY",
+  "description": "Asalto cerca del parque",
+  "latitude": 19.4167,
+  "longitude": -102.0667
+}
+```
+| Campo | Tipo | Obligatorio | Reglas |
+|-------|------|-------------|--------|
+| type | string | Sí | `ROBBERY`, `FIRE`, `MEDICAL`, `ACCIDENT`, `OTHER`. |
+| description | string | No | Máximo 500 caracteres. |
+| latitude | número | Sí | Entre -90 y 90. |
+| longitude | número | Sí | Entre -180 y 180. |
+
+Tipos requeridos: `ROBBERY` → `POLICE`, `FIRE` → `FIRE`, `MEDICAL`/`ACCIDENT` → `AMBULANCE`, `OTHER` → `CIVIL_PROTECTION`.
+
+**Respuesta exitosa — 201 Created**
+```json
+{
+  "id": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "type": "ROBBERY",
+  "requiredUnitType": "POLICE",
+  "description": "Asalto cerca del parque",
+  "latitude": 19.4167,
+  "longitude": -102.0667,
+  "status": "PENDING",
+  "dispatchRound": 1,
+  "createdAt": "2026-11-10T18:00:00Z",
+  "acceptedAt": null,
+  "arrivedAt": null,
+  "resolvedAt": null,
+  "cancelledAt": null,
+  "assignedUnit": null
+}
+```
+Si no hay unidades disponibles en ninguna ronda, se devuelve `201` con estado `EXPIRED`.
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 400 | `VALIDATION_ERROR` | Body o coordenadas inválidos. |
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | El rol no es `CITIZEN`. |
+| 409 | `ACTIVE_ALERT_EXISTS` | El ciudadano ya tiene una alerta activa. |
+
+**Ejemplo curl**
+```bash
+curl -X POST "$BASE_URL/api/alerts" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"ROBBERY","description":"Asalto cerca del parque","latitude":19.4167,"longitude":-102.0667}'
+```
+
+### GET /api/alerts/active
+
+**Descripción:** Devuelve la alerta activa del ciudadano autenticado. Si fue asignada, incluye tipo, identificador y última ubicación de la unidad, sin datos personales del usuario de la unidad.
+**Rol requerido:** `CITIZEN`.
+**Estado:** Implementado (Fase 3).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+
+**Parámetros de ruta / query:** Ninguno.
+
+**Respuesta exitosa — 200 OK**
+```json
+{
+  "id": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "type": "ROBBERY",
+  "requiredUnitType": "POLICE",
+  "description": "Asalto cerca del parque",
+  "latitude": 19.4167,
+  "longitude": -102.0667,
+  "status": "EN_ROUTE",
+  "dispatchRound": 1,
+  "createdAt": "2026-11-10T18:00:00Z",
+  "acceptedAt": "2026-11-10T18:00:08Z",
+  "arrivedAt": null,
+  "resolvedAt": null,
+  "cancelledAt": null,
+  "assignedUnit": {
+    "unitId": "27bab08f-c82e-4591-91b5-25ee14407a9e",
+    "unitType": "POLICE",
+    "identifier": "U-17",
+    "latitude": 19.417,
+    "longitude": -102.0664,
+    "heading": 90.0
+  }
+}
+```
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | El rol no es `CITIZEN`. |
+| 404 | `NOT_FOUND` | El ciudadano no tiene alerta activa. |
+
+**Ejemplo curl**
+```bash
+curl "$BASE_URL/api/alerts/active" -H "Authorization: Bearer $TOKEN"
+```
+
+### POST /api/alerts/{id}/cancel
+
+**Descripción:** Cancela la alerta propia en estado `PENDING` o `EN_ROUTE`; libera la unidad asignada si la hubiera y cancela las ofertas vigentes.
+**Rol requerido:** `CITIZEN` propietario de la alerta.
+**Estado:** Implementado (Fase 3).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+
+**Parámetros de ruta / query**
+| Parámetro | Tipo | Obligatorio | Reglas |
+|-----------|------|-------------|--------|
+| id | UUID | Sí | ID de la alerta. |
+
+**Body:** Ninguno.
+
+**Respuesta exitosa — 200 OK**
+```json
+{
+  "id": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "type": "ROBBERY",
+  "requiredUnitType": "POLICE",
+  "description": "Asalto cerca del parque",
+  "latitude": 19.4167,
+  "longitude": -102.0667,
+  "status": "CANCELLED",
+  "dispatchRound": 1,
+  "createdAt": "2026-11-10T18:00:00Z",
+  "acceptedAt": null,
+  "arrivedAt": null,
+  "resolvedAt": null,
+  "cancelledAt": "2026-11-10T18:00:10Z",
+  "assignedUnit": null
+}
+```
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | La alerta pertenece a otro ciudadano o el rol no es `CITIZEN`. |
+| 404 | `NOT_FOUND` | Alerta inexistente. |
+| 409 | `INVALID_ALERT_TRANSITION` | La alerta no está en `PENDING` ni `EN_ROUTE`. |
+
+**Ejemplo curl**
+```bash
+curl -X POST "$BASE_URL/api/alerts/62320253-f1bd-4466-a031-82dc997c7b96/cancel" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### GET /api/dispatches/pending
+
+**Descripción:** Lista las ofertas `OFFERED` vigentes de la unidad autenticada; permite recuperar ofertas si no recibió una notificación.
+**Rol requerido:** `UNIT`.
+**Estado:** Implementado (Fase 3).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+
+**Parámetros de ruta / query:** Ninguno.
+
+**Respuesta exitosa — 200 OK**
+```json
+[
+  {
+    "dispatchId": "f736d3e1-a714-43ad-9b7a-49f63fd295fa",
+    "alertId": "62320253-f1bd-4466-a031-82dc997c7b96",
+    "type": "ROBBERY",
+    "requiredUnitType": "POLICE",
+    "description": "Asalto cerca del parque",
+    "latitude": 19.4167,
+    "longitude": -102.0667,
+    "round": 1,
+    "distanceMeters": 125.4,
+    "expiresAt": "2026-11-10T18:00:30Z"
+  }
+]
+```
+
+**Errores posibles:** `401 UNAUTHORIZED`, `403 FORBIDDEN` si el rol no es `UNIT`, `404 NOT_FOUND` si falta el perfil de unidad.
+
+**Ejemplo curl**
+```bash
+curl "$BASE_URL/api/dispatches/pending" -H "Authorization: Bearer $TOKEN"
+```
+
+### POST /api/dispatches/{id}/accept
+
+**Descripción:** Acepta una oferta vigente. La asignación es atómica en PostgreSQL; una sola unidad puede ganar aunque varias acepten simultáneamente. Al ganar, la unidad pasa a `BUSY` y las demás ofertas se cancelan.
+**Rol requerido:** `UNIT` destinataria de la oferta.
+**Estado:** Implementado (Fase 3).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+
+**Parámetros de ruta / query**
+| Parámetro | Tipo | Obligatorio | Reglas |
+|-----------|------|-------------|--------|
+| id | UUID | Sí | ID del dispatch ofrecido a esta unidad. |
+
+**Body:** Ninguno.
+
+**Respuesta exitosa — 200 OK**
+```json
+{
+  "id": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "type": "ROBBERY",
+  "requiredUnitType": "POLICE",
+  "description": "Asalto cerca del parque",
+  "latitude": 19.4167,
+  "longitude": -102.0667,
+  "status": "EN_ROUTE",
+  "dispatchRound": 1,
+  "createdAt": "2026-11-10T18:00:00Z",
+  "acceptedAt": "2026-11-10T18:00:08Z",
+  "arrivedAt": null,
+  "resolvedAt": null,
+  "cancelledAt": null,
+  "assignedUnit": {
+    "unitId": "27bab08f-c82e-4591-91b5-25ee14407a9e",
+    "unitType": "POLICE",
+    "identifier": "U-17",
+    "latitude": 19.417,
+    "longitude": -102.0664,
+    "heading": 90.0
+  }
+}
+```
+La ruta de navegación queda para la Fase 5.
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | El rol no es `UNIT`. |
+| 404 | `NOT_FOUND` | Dispatch inexistente/no pertenece a esa unidad o falta perfil de unidad. |
+| 409 | `DISPATCH_NOT_OFFERED` | La oferta ya no está vigente. |
+| 409 | `ALERT_ALREADY_ASSIGNED` | Otra unidad ganó o la alerta ya no está pendiente. |
+| 409 | `UNIT_NOT_AVAILABLE` / `UNIT_ALREADY_ASSIGNED` | La unidad ya no puede aceptar otra alerta. |
+
+**Ejemplo curl**
+```bash
+curl -X POST "$BASE_URL/api/dispatches/f736d3e1-a714-43ad-9b7a-49f63fd295fa/accept" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST /api/dispatches/{id}/reject
+
+**Descripción:** Rechaza una oferta vigente. Si no quedan ofertas vivas, dispara la siguiente ronda de despacho.
+**Rol requerido:** `UNIT` destinataria de la oferta.
+**Estado:** Implementado (Fase 3).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+
+**Parámetros de ruta / query:** `id` (UUID del dispatch ofrecido a esta unidad).
+**Body:** Ninguno.
+
+**Respuesta exitosa — 200 OK**
+```json
+{
+  "dispatchId": "f736d3e1-a714-43ad-9b7a-49f63fd295fa",
+  "alertId": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "status": "REJECTED"
+}
+```
+
+**Errores posibles:** `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 NOT_FOUND` o `409 DISPATCH_NOT_OFFERED`.
+
+**Ejemplo curl**
+```bash
+curl -X POST "$BASE_URL/api/dispatches/f736d3e1-a714-43ad-9b7a-49f63fd295fa/reject" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST /api/alerts/{id}/arrive
+
+**Descripción:** Cambia la alerta asignada de `EN_ROUTE` a `ON_SCENE`.
+**Rol requerido:** `UNIT` asignada.
+**Estado:** Implementado (Fase 3).
+
+**Headers:** `Authorization: Bearer <jwt>`.
+**Parámetros de ruta / query:** `id` (UUID de la alerta).
+**Body:** Ninguno.
+
+**Respuesta exitosa — 200 OK**
+```json
+{
+  "id": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "type": "ROBBERY",
+  "requiredUnitType": "POLICE",
+  "description": "Asalto cerca del parque",
+  "latitude": 19.4167,
+  "longitude": -102.0667,
+  "status": "ON_SCENE",
+  "dispatchRound": 1,
+  "createdAt": "2026-11-10T18:00:00Z",
+  "acceptedAt": "2026-11-10T18:00:08Z",
+  "arrivedAt": "2026-11-10T18:05:00Z",
+  "resolvedAt": null,
+  "cancelledAt": null,
+  "assignedUnit": {
+    "unitId": "27bab08f-c82e-4591-91b5-25ee14407a9e",
+    "unitType": "POLICE",
+    "identifier": "U-17",
+    "latitude": 19.4167,
+    "longitude": -102.0667,
+    "heading": 90.0
+  }
+}
+```
+
+**Errores posibles:** `401 UNAUTHORIZED`, `403 FORBIDDEN` si la alerta pertenece a otra unidad, `404 NOT_FOUND`, `409 INVALID_ALERT_TRANSITION` si el estado actual no es `EN_ROUTE`.
+
+**Ejemplo curl**
+```bash
+curl -X POST "$BASE_URL/api/alerts/62320253-f1bd-4466-a031-82dc997c7b96/arrive" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST /api/alerts/{id}/resolve
+
+**Descripción:** Cambia la alerta asignada de `ON_SCENE` a `RESOLVED` y libera la unidad (`AVAILABLE`).
+**Rol requerido:** `UNIT` asignada.
+**Estado:** Implementado (Fase 3).
+
+**Headers:** `Authorization: Bearer <jwt>`.
+**Parámetros de ruta / query:** `id` (UUID de la alerta).
+**Body:** Ninguno.
+
+**Respuesta exitosa — 200 OK:** El mismo `AlertResponse`, con `status: "RESOLVED"`, `resolvedAt` asignado y `assignedUnit` conservada como referencia histórica.
+
+**Errores posibles:** `401 UNAUTHORIZED`, `403 FORBIDDEN` si la alerta pertenece a otra unidad, `404 NOT_FOUND`, `409 INVALID_ALERT_TRANSITION` si el estado actual no es `ON_SCENE`.
+
+**Ejemplo curl**
+```bash
+curl -X POST "$BASE_URL/api/alerts/62320253-f1bd-4466-a031-82dc997c7b96/resolve" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ### GET /actuator/health
 
 **Descripción:** Health check de Spring Boot Actuator.
@@ -489,7 +872,7 @@ No implementado en esta fase. Se documentará en Fase 4.
 
 ## 6. Flujo de ejemplo de punta a punta
 
-Flujo disponible en Fases 1–2 (registro → login → estado → ubicación → búsqueda cercana):
+Flujo disponible en Fases 1–3 (registro → login → ubicación → alerta → aceptar → llegada → resolver):
 
 ```bash
 curl -X POST "$BASE_URL/api/auth/register/citizen" \
@@ -522,12 +905,32 @@ curl -X POST "$BASE_URL/api/units/me/location" \
 
 curl "$BASE_URL/api/units/nearby?lat=19.4167&lon=-102.0667&radiusKm=5" \
   -H "Authorization: Bearer $TOKEN_CIUDADANO"
+
+curl -X POST "$BASE_URL/api/alerts" \
+  -H "Authorization: Bearer $TOKEN_CIUDADANO" -H "Content-Type: application/json" \
+  -d '{"type":"ROBBERY","description":"Asalto cerca del parque","latitude":19.4167,"longitude":-102.0667}'
+# Guarda el id de la alerta como ALERT_ID.
+
+curl "$BASE_URL/api/dispatches/pending" -H "Authorization: Bearer $TOKEN_UNIDAD"
+# Guarda el dispatchId correspondiente como DISPATCH_ID.
+
+curl -X POST "$BASE_URL/api/dispatches/$DISPATCH_ID/accept" \
+  -H "Authorization: Bearer $TOKEN_UNIDAD"
+
+curl "$BASE_URL/api/alerts/active" -H "Authorization: Bearer $TOKEN_CIUDADANO"
+
+curl -X POST "$BASE_URL/api/alerts/$ALERT_ID/arrive" \
+  -H "Authorization: Bearer $TOKEN_UNIDAD"
+
+curl -X POST "$BASE_URL/api/alerts/$ALERT_ID/resolve" \
+  -H "Authorization: Bearer $TOKEN_UNIDAD"
 ```
 
-Alertas, aceptación, tracking WebSocket y resolución se implementarán en fases posteriores.
+Las notificaciones WebSocket/tracking en tiempo real se implementarán en la Fase 4; la ruta de navegación, en la Fase 5.
 
 ## 7. Changelog
 
 - 2026-11-09 — Fase 0: creado el esqueleto de documentación y convenciones iniciales de la API.
 - 2026-11-09 — Fase 1: documentados registro de ciudadano/unidad, login y consulta de perfil.
 - 2026-11-09 — Fase 2: documentados estado, ubicación simple/batch idempotente y búsqueda anónima de unidades cercanas.
+- 2026-11-10 — Fase 3: documentados creación/cancelación/transiciones de alertas y operaciones de despacho.
