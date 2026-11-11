@@ -16,6 +16,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Instant;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -114,6 +115,130 @@ class AuthIntegrationTest {
         assertTrue(registration.body().contains("\"role\":\"UNIT\""));
         assertTrue(registration.body().contains("\"unitType\":\"POLICE\""));
         assertTrue(registration.body().contains("\"unitStatus\":\"OFFLINE\""));
+    }
+
+    @Test
+    void unitCanChangeManualStatusAndLocationEventsAreIdempotentAndOrdered() throws Exception {
+        UnitAccount account = registerUnitAndLogin();
+        HttpResponse<String> statusResponse = request("PUT", "/api/units/me/status",
+                "{\"status\":\"AVAILABLE\"}", account.token());
+        assertEquals(200, statusResponse.statusCode());
+        assertTrue(statusResponse.body().contains("\"status\":\"AVAILABLE\""));
+
+        HttpResponse<String> busyStatus = request("PUT", "/api/units/me/status",
+                "{\"status\":\"BUSY\"}", account.token());
+        assertEquals(400, busyStatus.statusCode());
+        assertTrue(busyStatus.body().contains("\"code\":\"VALIDATION_ERROR\""));
+
+        UUID eventId = UUID.randomUUID();
+        String currentLocation = locationJson(eventId, 19.4167, -102.0667, Instant.now().minusSeconds(5));
+        HttpResponse<String> first = request("POST", "/api/units/me/location", currentLocation, account.token());
+        assertEquals(200, first.statusCode());
+        assertTrue(first.body().contains("\"duplicate\":false"));
+        assertTrue(first.body().contains("\"currentLocationUpdated\":true"));
+
+        HttpResponse<String> duplicate = request("POST", "/api/units/me/location", currentLocation, account.token());
+        assertEquals(200, duplicate.statusCode());
+        assertTrue(duplicate.body().contains("\"duplicate\":true"));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "select count(*) from unit_location_history where event_id = ?", Integer.class, eventId));
+
+        HttpResponse<String> stale = request("POST", "/api/units/me/location",
+                locationJson(UUID.randomUUID(), 35.0, 10.0, Instant.now().minusSeconds(600)), account.token());
+        assertEquals(200, stale.statusCode());
+        assertTrue(stale.body().contains("\"currentLocationUpdated\":false"));
+
+        String citizenToken = registerCitizenAndLogin();
+        HttpResponse<String> nearby = request("GET", "/api/units/nearby?lat=19.4167&lon=-102.0667&radiusKm=1",
+                null, citizenToken);
+        assertEquals(200, nearby.statusCode());
+        assertTrue(nearby.body().contains(account.unitId().toString()));
+        assertTrue(nearby.body().contains("\"unitType\":\"POLICE\""));
+        assertTrue(!nearby.body().contains("userId") && !nearby.body().contains("identifier")
+                && !nearby.body().contains("email") && !nearby.body().contains("fullName"));
+    }
+
+    @Test
+    void batchLocationIsIdempotentAndValidatesCoordinatesAndCaptureTime() throws Exception {
+        UnitAccount account = registerUnitAndLogin();
+        UUID firstEvent = UUID.randomUUID();
+        UUID secondEvent = UUID.randomUUID();
+        String batch = "[%s,%s]".formatted(
+                locationJson(firstEvent, 0.0, 0.0, Instant.now().minusSeconds(20)),
+                locationJson(secondEvent, 0.1, 0.1, Instant.now().minusSeconds(10)));
+
+        HttpResponse<String> first = request("POST", "/api/units/me/locations/batch", batch, account.token());
+        assertEquals(200, first.statusCode());
+        assertTrue(first.body().contains("\"received\":2"));
+        assertTrue(first.body().contains("\"stored\":2"));
+        assertTrue(first.body().contains("\"duplicates\":0"));
+
+        HttpResponse<String> repeated = request("POST", "/api/units/me/locations/batch", batch, account.token());
+        assertEquals(200, repeated.statusCode());
+        assertTrue(repeated.body().contains("\"stored\":0"));
+        assertTrue(repeated.body().contains("\"duplicates\":2"));
+
+        HttpResponse<String> invalidCoordinates = request("POST", "/api/units/me/location",
+                locationJson(UUID.randomUUID(), 90.1, 0.0, Instant.now()), account.token());
+        assertEquals(400, invalidCoordinates.statusCode());
+
+        HttpResponse<String> future = request("POST", "/api/units/me/location",
+                locationJson(UUID.randomUUID(), 0.0, 0.0, Instant.now().plusSeconds(120)), account.token());
+        assertEquals(400, future.statusCode());
+        assertTrue(future.body().contains("\"code\":\"VALIDATION_ERROR\""));
+
+        UUID mustNotPersist = UUID.randomUUID();
+        String invalidBatch = "[%s,%s]".formatted(
+                locationJson(mustNotPersist, 1.0, 1.0, Instant.now()),
+                locationJson(UUID.randomUUID(), 2.0, 2.0, Instant.now().plusSeconds(120)));
+        HttpResponse<String> rejectedBatch = request("POST", "/api/units/me/locations/batch",
+                invalidBatch, account.token());
+        assertEquals(400, rejectedBatch.statusCode());
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "select count(*) from unit_location_history where event_id = ?", Integer.class, mustNotPersist));
+    }
+
+    private UnitAccount registerUnitAndLogin() throws Exception {
+        String email = "phase2-unit-" + UUID.randomUUID() + "@example.com";
+        HttpResponse<String> registration = request("POST", "/api/auth/register/unit", """
+                {"email":"%s","password":"Secreto123!","fullName":"Unidad prueba","unitType":"POLICE","identifier":"P2-%s"}
+                """.formatted(email, UUID.randomUUID()), null);
+        assertEquals(201, registration.statusCode(), registration.body());
+        Matcher unitIdMatcher = Pattern.compile("\\\"unitId\\\":\\\"([^\\\"]+)\\\"").matcher(registration.body());
+        assertTrue(unitIdMatcher.find());
+
+        HttpResponse<String> login = request("POST", "/api/auth/login", """
+                {"email":"%s","password":"Secreto123!"}
+                """.formatted(email), null);
+        assertEquals(200, login.statusCode());
+        return new UnitAccount(UUID.fromString(unitIdMatcher.group(1)), extractToken(login.body()));
+    }
+
+    private String registerCitizenAndLogin() throws Exception {
+        String email = "phase2-citizen-" + UUID.randomUUID() + "@example.com";
+        HttpResponse<String> registration = request("POST", "/api/auth/register/citizen", """
+                {"email":"%s","password":"Secreto123!","fullName":"Ciudadana prueba"}
+                """.formatted(email), null);
+        assertEquals(201, registration.statusCode());
+        HttpResponse<String> login = request("POST", "/api/auth/login", """
+                {"email":"%s","password":"Secreto123!"}
+                """.formatted(email), null);
+        assertEquals(200, login.statusCode());
+        return extractToken(login.body());
+    }
+
+    private String extractToken(String body) {
+        Matcher tokenMatcher = Pattern.compile("\\\"accessToken\\\":\\\"([^\\\"]+)\\\"").matcher(body);
+        assertTrue(tokenMatcher.find(), "La respuesta de login debe incluir accessToken");
+        return tokenMatcher.group(1);
+    }
+
+    private String locationJson(UUID eventId, double latitude, double longitude, Instant recordedAt) {
+        return "{\"eventId\":\"%s\",\"latitude\":%s,\"longitude\":%s,\"recordedAt\":\"%s\"}"
+                .formatted(eventId, latitude, longitude, recordedAt);
+    }
+
+    private record UnitAccount(UUID unitId, String token) {
     }
 
     private HttpResponse<String> request(String method, String path, String body, String token) throws Exception {

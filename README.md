@@ -7,7 +7,7 @@ Backend modular para el monitoreo colaborativo de brigadas de emergencia. Requie
 1. En Neon, copia la cadena de conexión PostgreSQL. Convierte `postgresql://HOST/BASE?sslmode=require` a `jdbc:postgresql://HOST/BASE?sslmode=require`.
 2. Usa el host **directo** para `DB_MIGRATION_URL`; Flyway no debe conectarse por el host pooled (`-pooler`). `DB_URL` puede ser la URL de conexión normal.
 3. Copia `.env.example` a `.env` y define `DB_URL`, `DB_MIGRATION_URL` (opcional), `DB_USER`, `DB_PASSWORD` y un `JWT_SECRET` aleatorio de al menos 32 bytes. No subas `.env` al repositorio.
-4. Carga las variables en la terminal/IDE (Spring no carga `.env` automáticamente) y arranca:
+4. Carga las variables en la terminal/IDE (Spring no carga `.env` automáticamente) y arranca. En IntelliJ, abre **Run → Edit Configurations → UrbtrackApplication → Environment variables** y define allí las cinco variables indicadas arriba usando los valores de `.env` (sin incluir las comillas que los rodean). Deja **Working directory** en la raíz del proyecto. También puedes iniciar desde la terminal integrada de IntelliJ:
 
    ```bash
    set -a
@@ -22,5 +22,6 @@ La aplicación ejecuta Flyway al arrancar y Hibernate valida el esquema existent
 
 ## Pendientes
 
-- Fase 2: estado y ubicación de unidades, batch idempotente y búsqueda de unidades cercanas.
-- Configurar las credenciales locales de Neon y confirmar la aplicación de la migración V1 en un ambiente accesible.
+- Fase 3: alertas, rondas de despacho, aceptación atómica y transiciones de estado.
+- Fase 4: WebSocket/STOMP y publicación de eventos de tracking en tiempo real.
+- Las ubicaciones se persisten desde Fase 2; la emisión de notificaciones en tiempo real queda para Fase 4.

@@ -29,6 +29,7 @@
 | 409 | `EMAIL_ALREADY_EXISTS` | El correo ya está registrado. |
 | 409 | `UNIT_IDENTIFIER_EXISTS` | El identificador de unidad ya está registrado. |
 | 409 | `DATA_CONFLICT` | Conflicto con otra restricción de integridad. |
+| 409 | `UNIT_BUSY` | Una unidad ocupada no puede cambiar su estado manualmente. |
 | 405 | `METHOD_NOT_ALLOWED` | Método HTTP no permitido para la ruta. |
 | 500 | `INTERNAL_ERROR` | Error inesperado. |
 
@@ -41,7 +42,11 @@
 - `GET /api/me`
 
 ### Ciudadano, unidades, alertas y despacho
-- Sin endpoints implementados todavía (Fase 2 en adelante).
+- `GET /api/units/nearby`
+- `PUT /api/units/me/status`
+- `POST /api/units/me/location`
+- `POST /api/units/me/locations/batch`
+- Alertas y despacho: sin endpoints implementados todavía (Fase 3 en adelante).
 
 ### Operación
 - `GET /actuator/health`
@@ -248,6 +253,215 @@ curl -X POST "$BASE_URL/api/auth/login" \
 curl "$BASE_URL/api/me" -H "Authorization: Bearer $TOKEN"
 ```
 
+### GET /api/units/nearby
+
+**Descripción:** Busca unidades `AVAILABLE` con ubicación recibida en los últimos 120 segundos, ordenadas por distancia Haversine. La respuesta no incluye usuario, nombre, identificador operativo ni otros datos personales.
+**Rol requerido:** `CITIZEN`.
+**Estado:** Implementado (Fase 2).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+
+**Parámetros de ruta / query**
+| Parámetro | Tipo | Obligatorio | Reglas |
+|-----------|------|-------------|--------|
+| lat | número | Sí | Latitud entre -90 y 90. |
+| lon | número | Sí | Longitud entre -180 y 180. |
+| radiusKm | número | Sí | Número finito mayor que cero. |
+
+**Respuesta exitosa — 200 OK**
+```json
+[
+  {
+    "unitId": "27bab08f-c82e-4591-91b5-25ee14407a9e",
+    "unitType": "POLICE",
+    "latitude": 19.4167,
+    "longitude": -102.0667,
+    "heading": 90.0
+  }
+]
+```
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 400 | `VALIDATION_ERROR` | Faltan parámetros o sus valores/rangos no son válidos. |
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | El rol no es `CITIZEN`. |
+
+**Ejemplo curl**
+```bash
+curl "$BASE_URL/api/units/nearby?lat=19.4167&lon=-102.0667&radiusKm=5" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### PUT /api/units/me/status
+
+**Descripción:** Cambia el estado manual de la unidad autenticada. `BUSY` es administrado por el sistema y no se acepta en esta operación.
+**Rol requerido:** `UNIT`.
+**Estado:** Implementado (Fase 2).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+| Content-Type | `application/json` |
+
+**Parámetros de ruta / query:** Ninguno.
+
+**Body**
+```json
+{ "status": "AVAILABLE" }
+```
+| Campo | Tipo | Obligatorio | Reglas |
+|-------|------|-------------|--------|
+| status | string | Sí | `AVAILABLE` o `OFFLINE`. `BUSY` no puede establecerse manualmente. |
+
+**Respuesta exitosa — 200 OK**
+```json
+{ "unitId": "27bab08f-c82e-4591-91b5-25ee14407a9e", "status": "AVAILABLE" }
+```
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 400 | `VALIDATION_ERROR` | Estado faltante, desconocido o `BUSY`. |
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | El rol no es `UNIT`. |
+| 404 | `NOT_FOUND` | La cuenta no tiene perfil de unidad. |
+| 409 | `UNIT_BUSY` | La unidad está ocupada y no puede cambiar su estado manualmente. |
+
+**Ejemplo curl**
+```bash
+curl -X PUT "$BASE_URL/api/units/me/status" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"AVAILABLE"}'
+```
+
+### POST /api/units/me/location
+
+**Descripción:** Registra un evento de ubicación en el historial y actualiza la última ubicación si `recordedAt` no es anterior a la vigente. Un `eventId` repetido es idempotente y responde `200` sin insertar de nuevo.
+**Rol requerido:** `UNIT`.
+**Estado:** Implementado (Fase 2).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+| Content-Type | `application/json` |
+
+**Parámetros de ruta / query:** Ninguno.
+
+**Body**
+```json
+{
+  "eventId": "7e498979-f108-4a4d-86b3-b4f9f0c81e80",
+  "latitude": 19.4167,
+  "longitude": -102.0667,
+  "heading": 90.0,
+  "speedKmh": 35.5,
+  "recordedAt": "2026-11-09T18:00:00Z"
+}
+```
+| Campo | Tipo | Obligatorio | Reglas |
+|-------|------|-------------|--------|
+| eventId | UUID | Sí | Identificador único generado por el cliente. |
+| latitude | número | Sí | Entre -90 y 90. |
+| longitude | número | Sí | Entre -180 y 180. |
+| heading | número | No | Entre 0 y 360. |
+| speedKmh | número | No | Velocidad reportada por el cliente. |
+| recordedAt | fecha/hora | Sí | ISO-8601; no más de 1 minuto en el futuro. |
+
+**Respuesta exitosa — 200 OK**
+```json
+{ "eventId": "7e498979-f108-4a4d-86b3-b4f9f0c81e80", "duplicate": false, "currentLocationUpdated": true }
+```
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 400 | `VALIDATION_ERROR` | Coordenadas, rumbo, fecha o cuerpo inválidos. |
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | El rol no es `UNIT`. |
+| 404 | `NOT_FOUND` | La cuenta no tiene perfil de unidad. |
+
+**Ejemplo curl**
+```bash
+curl -X POST "$BASE_URL/api/units/me/location" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"eventId":"7e498979-f108-4a4d-86b3-b4f9f0c81e80","latitude":19.4167,"longitude":-102.0667,"recordedAt":"2026-11-09T18:00:00Z"}'
+```
+
+### POST /api/units/me/locations/batch
+
+**Descripción:** Persiste una lista de ubicaciones offline en el orden recibido. Cada `eventId` es idempotente. El lote completo se procesa en una transacción; ubicaciones históricas se guardan aunque sean antiguas, pero no reemplazan la ubicación vigente.
+**Rol requerido:** `UNIT`.
+**Estado:** Implementado (Fase 2).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+| Content-Type | `application/json` |
+
+**Parámetros de ruta / query:** Ninguno.
+
+**Body**
+```json
+[
+  {
+    "eventId": "7e498979-f108-4a4d-86b3-b4f9f0c81e80",
+    "latitude": 19.4167,
+    "longitude": -102.0667,
+    "recordedAt": "2026-11-09T18:00:00Z"
+  },
+  {
+    "eventId": "adc259af-c994-4481-9ee4-0214ce48c654",
+    "latitude": 19.4170,
+    "longitude": -102.0664,
+    "heading": 91.0,
+    "speedKmh": 30.0,
+    "recordedAt": "2026-11-09T18:00:05Z"
+  }
+]
+```
+Cada elemento sigue las reglas del body de `POST /api/units/me/location`.
+
+**Respuesta exitosa — 200 OK**
+```json
+{
+  "received": 2,
+  "stored": 2,
+  "duplicates": 0,
+  "currentLocationsUpdated": 2,
+  "results": [
+    { "eventId": "7e498979-f108-4a4d-86b3-b4f9f0c81e80", "duplicate": false, "currentLocationUpdated": true },
+    { "eventId": "adc259af-c994-4481-9ee4-0214ce48c654", "duplicate": false, "currentLocationUpdated": true }
+  ]
+}
+```
+`stored` cuenta eventos nuevos del historial; `currentLocationsUpdated` cuenta los que reemplazaron la última ubicación.
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 400 | `VALIDATION_ERROR` | Algún elemento del lote es inválido. No se persiste parcialmente. |
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | El rol no es `UNIT`. |
+| 404 | `NOT_FOUND` | La cuenta no tiene perfil de unidad. |
+
+**Ejemplo curl**
+```bash
+curl -X POST "$BASE_URL/api/units/me/locations/batch" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '[{"eventId":"7e498979-f108-4a4d-86b3-b4f9f0c81e80","latitude":19.4167,"longitude":-102.0667,"recordedAt":"2026-11-09T18:00:00Z"}]'
+```
+
 ### GET /actuator/health
 
 **Descripción:** Health check de Spring Boot Actuator.
@@ -275,7 +489,7 @@ No implementado en esta fase. Se documentará en Fase 4.
 
 ## 6. Flujo de ejemplo de punta a punta
 
-Flujo implementado en esta fase (registro → login → consulta de perfil):
+Flujo disponible en Fases 1–2 (registro → login → estado → ubicación → búsqueda cercana):
 
 ```bash
 curl -X POST "$BASE_URL/api/auth/register/citizen" \
@@ -286,12 +500,34 @@ curl -X POST "$BASE_URL/api/auth/login" \
   -H "Content-Type: application/json" \
   -d '{"email":"ana@example.com","password":"Secreto123!"}'
 
-curl "$BASE_URL/api/me" -H "Authorization: Bearer $TOKEN"
+# Define TOKEN_CIUDADANO con el accessToken de la respuesta de login.
+curl "$BASE_URL/api/me" -H "Authorization: Bearer $TOKEN_CIUDADANO"
+
+curl -X POST "$BASE_URL/api/auth/register/unit" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"unidad@example.com","password":"Secreto123!","fullName":"Unidad U-17","unitType":"POLICE","identifier":"U-17"}'
+
+curl -X POST "$BASE_URL/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"unidad@example.com","password":"Secreto123!"}'
+# Define TOKEN_UNIDAD con el accessToken de la respuesta de login de la unidad.
+
+curl -X PUT "$BASE_URL/api/units/me/status" \
+  -H "Authorization: Bearer $TOKEN_UNIDAD" -H "Content-Type: application/json" \
+  -d '{"status":"AVAILABLE"}'
+
+curl -X POST "$BASE_URL/api/units/me/location" \
+  -H "Authorization: Bearer $TOKEN_UNIDAD" -H "Content-Type: application/json" \
+  -d '{"eventId":"7e498979-f108-4a4d-86b3-b4f9f0c81e80","latitude":19.4167,"longitude":-102.0667,"recordedAt":"2026-11-09T18:00:00Z"}'
+
+curl "$BASE_URL/api/units/nearby?lat=19.4167&lon=-102.0667&radiusKm=5" \
+  -H "Authorization: Bearer $TOKEN_CIUDADANO"
 ```
 
-Ubicación, alerta, aceptación, tracking y resolución se implementarán en fases posteriores.
+Alertas, aceptación, tracking WebSocket y resolución se implementarán en fases posteriores.
 
 ## 7. Changelog
 
 - 2026-11-09 — Fase 0: creado el esqueleto de documentación y convenciones iniciales de la API.
 - 2026-11-09 — Fase 1: documentados registro de ciudadano/unidad, login y consulta de perfil.
+- 2026-11-09 — Fase 2: documentados estado, ubicación simple/batch idempotente y búsqueda anónima de unidades cercanas.

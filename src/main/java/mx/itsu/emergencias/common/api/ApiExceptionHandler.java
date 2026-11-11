@@ -1,6 +1,7 @@
 package mx.itsu.emergencias.common.api;
 
 import mx.itsu.emergencias.common.exception.ConflictException;
+import mx.itsu.emergencias.common.exception.InvalidRequestException;
 import mx.itsu.emergencias.common.exception.NotFoundException;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -12,6 +13,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 
@@ -23,6 +26,16 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ConflictException.class)
     ResponseEntity<ApiError> conflict(ConflictException exception, HttpServletRequest request) {
         return error(HttpStatus.CONFLICT, exception.getCode(), exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(InvalidRequestException.class)
+    ResponseEntity<ApiError> invalidRequest(InvalidRequestException exception, HttpServletRequest request) {
+        return error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler({MissingServletRequestParameterException.class, MethodArgumentTypeMismatchException.class})
+    ResponseEntity<ApiError> invalidParameter(Exception exception, HttpServletRequest request) {
+        return error(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Parámetros de solicitud inválidos o incompletos", request);
     }
 
     @ExceptionHandler(NotFoundException.class)
