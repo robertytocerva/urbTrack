@@ -26,7 +26,21 @@ Conecta STOMP en `ws://localhost:8080/ws` y envía el JWT en el header nativo `A
 
 Las rutas de alertas (`GET /api/alerts/{id}/route`) usan el servicio demo de OSRM configurado en `app.routing.osrm-base-url`; no tiene garantía de disponibilidad. Si falla, la API responde con la línea recta y `fallback: true`.
 
+## OpenAPI, Postman y simulación (Fase 6)
+
+- Swagger UI: `http://localhost:8080/swagger-ui.html`; especificación OpenAPI JSON: `http://localhost:8080/v3/api-docs`.
+- Importa `postman/UrbTrack.postman_collection.json` en Postman. La colección crea cuentas con identificadores únicos y guarda los JWT en variables locales; no exportes una colección con tokens.
+- El simulador usa solo Python 3 y la biblioteca estándar. Define `UNIT_TOKEN` con el JWT de una unidad y ejecuta:
+
+  ```bash
+  UNIT_TOKEN='<jwt-de-unidad>' python3 scripts/simulate_unit.py \
+    --latitude 19.4167 --longitude -102.0667 --events 10 --interval-seconds 3
+  ```
+
+En producción se recomienda desactivar Swagger UI y OpenAPI (`springdoc.swagger-ui.enabled=false` y `springdoc.api-docs.enabled=false`) o protegerlos con la política de acceso del despliegue.
+
+El broker STOMP simple reside en memoria solo para transporte de mensajes; el estado persistente sigue en PostgreSQL.
+
 ## Pendientes
 
-- Fase 6: OpenAPI, colección Postman y utilidades de simulación.
-- El broker STOMP simple reside en memoria solo para transporte de mensajes; el estado persistente sigue en PostgreSQL.
+- No hay fases obligatorias pendientes. La ruta OSRM sigue siendo un servicio demo sin garantía de disponibilidad.

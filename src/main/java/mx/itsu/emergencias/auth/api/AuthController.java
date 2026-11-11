@@ -1,6 +1,8 @@
 package mx.itsu.emergencias.auth.api;
 
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import mx.itsu.emergencias.auth.service.AuthService;
 import mx.itsu.emergencias.user.api.UserProfileResponse;
 import org.springframework.http.HttpStatus;
@@ -17,6 +19,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api")
+@Tag(name = "Auth", description = "Registro, autenticación y perfil de cuenta")
 public class AuthController {
 
     private final AuthService authService;
@@ -43,6 +46,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @SecurityRequirement(name = "bearerAuth")
     public UserProfileResponse me(@AuthenticationPrincipal Jwt jwt) {
         return authService.getProfile(UUID.fromString(jwt.getSubject()));
     }

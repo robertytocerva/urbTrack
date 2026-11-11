@@ -1,6 +1,8 @@
 package mx.itsu.emergencias.alert.api;
 
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import mx.itsu.emergencias.alert.service.AlertService;
 import mx.itsu.emergencias.routing.api.RouteResponse;
 import mx.itsu.emergencias.routing.service.AlertRoutingService;
@@ -19,6 +21,8 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/alerts")
+@Tag(name = "Alertas", description = "Creación y ciclo de vida de alertas")
+@SecurityRequirement(name = "bearerAuth")
 public class AlertController {
 
     private final AlertService alertService;

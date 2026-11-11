@@ -1,6 +1,8 @@
 package mx.itsu.emergencias.unit.api;
 
 import jakarta.validation.Valid;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import mx.itsu.emergencias.tracking.api.BatchUnitLocationResponse;
 import mx.itsu.emergencias.tracking.api.UnitLocationRequest;
 import mx.itsu.emergencias.tracking.api.UnitLocationResult;
@@ -22,6 +24,8 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/units")
+@Tag(name = "Unidades", description = "Estado, ubicación y búsqueda de unidades")
+@SecurityRequirement(name = "bearerAuth")
 public class UnitController {
 
     private final UnitStatusService unitStatusService;

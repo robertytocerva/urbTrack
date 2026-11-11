@@ -67,6 +67,12 @@
 ### Operación
 - `GET /actuator/health`
 
+### Documentación API
+- `GET /v3/api-docs`
+- `GET /v3/api-docs.yaml`
+- `GET /swagger-ui.html`
+- `GET /swagger-ui/index.html`
+
 ## 4. Detalle de endpoints
 
 ### POST /api/auth/register/citizen
@@ -929,6 +935,80 @@ curl -X POST "$BASE_URL/api/alerts/62320253-f1bd-4466-a031-82dc997c7b96/resolve"
 curl "$BASE_URL/actuator/health"
 ```
 
+### GET /v3/api-docs
+
+**Descripción:** Genera la especificación OpenAPI JSON de los endpoints REST implementados.
+**Rol requerido:** Público.
+**Estado:** Implementado (Fase 6).
+
+**Headers:** Ninguno.
+**Parámetros de ruta / query:** Ninguno.
+
+**Respuesta exitosa — 200 OK** (`application/json`)
+```json
+{
+  "openapi": "3.1.0",
+  "info": { "title": "UrbTrack API", "version": "1.0.0" },
+  "servers": [{ "url": "http://localhost:8080" }],
+  "paths": {
+    "/api/alerts": {
+      "post": { "responses": { "201": { "description": "Alerta creada" } } }
+    }
+  }
+}
+```
+
+**Errores posibles:** `500 INTERNAL_ERROR` si falla la generación de la especificación.
+
+**Ejemplo curl**
+```bash
+curl "$BASE_URL/v3/api-docs"
+```
+
+### GET /v3/api-docs.yaml
+
+**Descripción:** Especificación OpenAPI en formato YAML.
+**Rol requerido:** Público.
+**Estado:** Implementado (Fase 6).
+
+**Headers / Parámetros:** Ninguno.
+**Respuesta exitosa — 200 OK:** Documento YAML OpenAPI.
+**Errores posibles:** `500 INTERNAL_ERROR` si falla la generación.
+
+**Ejemplo curl**
+```bash
+curl "$BASE_URL/v3/api-docs.yaml"
+```
+
+### GET /swagger-ui.html
+
+**Descripción:** Redirige a la interfaz interactiva Swagger UI.
+**Rol requerido:** Público.
+**Estado:** Implementado (Fase 6).
+
+**Headers / Parámetros:** Ninguno.
+**Respuesta exitosa — 302 Found:** Redirección al HTML de Swagger UI.
+
+**Ejemplo curl**
+```bash
+curl -L "$BASE_URL/swagger-ui.html"
+```
+
+### GET /swagger-ui/index.html
+
+**Descripción:** Interfaz web para explorar OpenAPI y ejecutar llamadas REST autenticadas.
+**Rol requerido:** Público para cargar la interfaz; los endpoints de negocio mantienen sus requisitos JWT y rol.
+**Estado:** Implementado (Fase 6).
+
+**Headers / Parámetros:** Ninguno.
+**Respuesta exitosa — 200 OK:** Página HTML de Swagger UI.
+**Errores posibles:** `404 NOT_FOUND` si el recurso está deshabilitado en la configuración del entorno.
+
+**Ejemplo curl**
+```bash
+curl "$BASE_URL/swagger-ui/index.html"
+```
+
 ## 5. WebSocket
 
 **Estado:** Implementado (Fase 4). STOMP 1.2 sobre WebSocket, broker simple en memoria; los comandos continúan en REST.
@@ -1102,3 +1182,4 @@ El flujo REST de alertas, aceptación, llegada, ruta y resolución está impleme
 - 2026-11-10 — Fase 3: documentados creación/cancelación/transiciones de alertas y operaciones de despacho.
 - 2026-11-10 — Fase 4: documentados conexión STOMP/JWT, destinos autorizados y mensajes de oferta, estado y tracking.
 - 2026-11-10 — Fase 5: documentada la consulta de ruta OSRM con fallback lineal.
+- 2026-11-10 — Fase 6: añadidos OpenAPI/Swagger, colección Postman y guía del simulador de unidades.

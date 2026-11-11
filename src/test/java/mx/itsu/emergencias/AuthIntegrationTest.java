@@ -101,6 +101,25 @@ class AuthIntegrationTest {
     }
 
     @Test
+    void openApiAndSwaggerUiAreExposedWithoutNeonAccess() throws Exception {
+        HttpResponse<String> specification = request("GET", "/v3/api-docs", null, null);
+        assertEquals(200, specification.statusCode());
+        assertTrue(specification.body().contains("/api/alerts/{alertId}/route"));
+        assertTrue(specification.body().contains("bearerAuth"));
+
+        HttpResponse<String> yaml = request("GET", "/v3/api-docs.yaml", null, null);
+        assertEquals(200, yaml.statusCode());
+        assertTrue(yaml.body().contains("openapi:"));
+
+        HttpResponse<String> redirect = request("GET", "/swagger-ui.html", null, null);
+        assertEquals(302, redirect.statusCode());
+
+        HttpResponse<String> swaggerUi = request("GET", "/swagger-ui/index.html", null, null);
+        assertEquals(200, swaggerUi.statusCode());
+        assertTrue(swaggerUi.body().contains("Swagger UI"));
+    }
+
+    @Test
     void registersCitizenLogsInAndReadsProfile() throws Exception {
         String email = "citizen-" + UUID.randomUUID() + "@example.com";
         HttpResponse<String> registration = request("POST", "/api/auth/register/citizen", """

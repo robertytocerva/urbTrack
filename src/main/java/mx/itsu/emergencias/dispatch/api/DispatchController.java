@@ -1,5 +1,7 @@
 package mx.itsu.emergencias.dispatch.api;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import mx.itsu.emergencias.alert.api.AlertResponse;
 import mx.itsu.emergencias.dispatch.service.AlertDispatchService;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -15,6 +17,8 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/dispatches")
+@Tag(name = "Despacho", description = "Ofertas, aceptación y rechazo de despachos")
+@SecurityRequirement(name = "bearerAuth")
 public class DispatchController {
 
     private final AlertDispatchService dispatchService;

@@ -43,7 +43,8 @@ public class SecurityConfiguration {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/api/auth/**", "/actuator/health", "/ws").permitAll()
+                        .requestMatchers("/api/auth/**", "/actuator/health", "/ws",
+                                "/v3/api-docs/**", "/v3/api-docs.yaml", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/units/me/**", "/api/dispatches/**").hasRole("UNIT")
                         .requestMatchers(HttpMethod.GET, "/api/units/nearby").hasRole("CITIZEN")

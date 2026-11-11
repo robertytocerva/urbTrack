@@ -1,0 +1,312 @@
+{
+  "info": {
+    "_postman_id": "32ab73fa-65cd-4a40-924b-e10ef36e4aa6",
+    "name": "UrbTrack API",
+    "description": "Colección de pruebas para las Fases 0–6. Ejecuta primero Auth y Unidad, después el flujo de alerta. Los tokens se guardan solo como variables locales de colección.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "citizenEmail", "value": "" },
+    { "key": "citizenToken", "value": "" },
+    { "key": "unitEmail", "value": "" },
+    { "key": "unitToken", "value": "" },
+    { "key": "unitIdentifier", "value": "" },
+    { "key": "alertId", "value": "" },
+    { "key": "dispatchId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Operación",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/actuator/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth y cuentas",
+      "item": [
+        {
+          "name": "Registrar ciudadano",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('citizenEmail', 'citizen-' + pm.variables.replaceIn('{{$guid}}') + '@example.test');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{citizenEmail}}\",\n  \"password\": \"Secreto123!\",\n  \"fullName\": \"Ciudadano Postman\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/auth/register/citizen"
+          }
+        },
+        {
+          "name": "Login ciudadano (guarda citizenToken)",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('login ciudadano responde 200', () => pm.response.to.have.status(200));",
+                "pm.collectionVariables.set('citizenToken', pm.response.json().accessToken);"
+              ]
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{citizenEmail}}\",\n  \"password\": \"Secreto123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Perfil /api/me",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{citizenToken}}" }],
+            "url": "{{baseUrl}}/api/me"
+          }
+        },
+        {
+          "name": "Registrar unidad",
+          "event": [{
+            "listen": "prerequest",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "const id = pm.variables.replaceIn('{{$guid}}');",
+                "pm.collectionVariables.set('unitEmail', 'unit-' + id + '@example.test');",
+                "pm.collectionVariables.set('unitIdentifier', 'POSTMAN-' + id.substring(0, 8));"
+              ]
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{unitEmail}}\",\n  \"password\": \"Secreto123!\",\n  \"fullName\": \"Unidad Postman\",\n  \"unitType\": \"POLICE\",\n  \"identifier\": \"{{unitIdentifier}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/auth/register/unit"
+          }
+        },
+        {
+          "name": "Login unidad (guarda unitToken)",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('login unidad responde 200', () => pm.response.to.have.status(200));",
+                "pm.collectionVariables.set('unitToken', pm.response.json().accessToken);"
+              ]
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{unitEmail}}\",\n  \"password\": \"Secreto123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Unidad",
+      "item": [
+        {
+          "name": "Cambiar estado a AVAILABLE",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{unitToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"status\":\"AVAILABLE\"}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/units/me/status"
+          }
+        },
+        {
+          "name": "Reportar ubicación",
+          "event": [{
+            "listen": "prerequest",
+            "script": { "type": "text/javascript", "exec": ["pm.collectionVariables.set('eventId', pm.variables.replaceIn('{{$guid}}'));"] }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{unitToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{eventId}}\",\n  \"latitude\": 19.4167,\n  \"longitude\": -102.0667,\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/units/me/location"
+          }
+        },
+        {
+          "name": "Ubicaciones batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{unitToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[{\"eventId\":\"{{$guid}}\",\"latitude\":19.4168,\"longitude\":-102.0666,\"recordedAt\":\"{{$isoTimestamp}}\"}]",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/units/me/locations/batch"
+          }
+        },
+        {
+          "name": "Unidades cercanas (token ciudadano)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{citizenToken}}" }],
+            "url": "{{baseUrl}}/api/units/nearby?lat=19.4167&lon=-102.0667&radiusKm=5"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Alertas: flujo principal",
+      "item": [
+        {
+          "name": "Crear alerta ROBBERY (guarda alertId)",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('alerta creada', () => pm.response.to.have.status(201));",
+                "pm.collectionVariables.set('alertId', pm.response.json().id);"
+              ]
+            }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{citizenToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"type\":\"ROBBERY\",\"description\":\"Prueba Postman\",\"latitude\":19.4167,\"longitude\":-102.0667}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/alerts"
+          }
+        },
+        {
+          "name": "Ofertas pendientes (guarda dispatchId)",
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "const offers = pm.response.json();",
+                "pm.test('lista de ofertas responde 200', () => pm.response.to.have.status(200));",
+                "const offer = offers.find(item => item.alertId === pm.collectionVariables.get('alertId'));",
+                "if (offer) pm.collectionVariables.set('dispatchId', offer.dispatchId);"
+              ]
+            }
+          }],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{unitToken}}" }],
+            "url": "{{baseUrl}}/api/dispatches/pending"
+          }
+        },
+        {
+          "name": "Aceptar dispatchId pendiente",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{unitToken}}" }],
+            "url": "{{baseUrl}}/api/dispatches/{{dispatchId}}/accept"
+          }
+        },
+        {
+          "name": "Consultar alerta activa",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{citizenToken}}" }],
+            "url": "{{baseUrl}}/api/alerts/active"
+          }
+        },
+        {
+          "name": "Consultar ruta (alerta EN_ROUTE)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{citizenToken}}" }],
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}/route"
+          }
+        },
+        {
+          "name": "Marcar llegada",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{unitToken}}" }],
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}/arrive"
+          }
+        },
+        {
+          "name": "Resolver alerta",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{unitToken}}" }],
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}/resolve"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Operaciones alternativas (no ejecutar después de resolver)",
+      "item": [
+        {
+          "name": "Rechazar oferta pendiente",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{unitToken}}" }],
+            "url": "{{baseUrl}}/api/dispatches/{{dispatchId}}/reject"
+          }
+        },
+        {
+          "name": "Cancelar alerta propia pendiente o EN_ROUTE",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{citizenToken}}" }],
+            "url": "{{baseUrl}}/api/alerts/{{alertId}}/cancel"
+          }
+        }
+      ]
+    }
+  ]
+}
