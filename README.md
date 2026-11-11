@@ -20,9 +20,12 @@ Backend modular para el monitoreo colaborativo de brigadas de emergencia. Requie
 
 La aplicación ejecuta Flyway al arrancar y Hibernate valida el esquema existente (`ddl-auto: validate`). El health check está en `GET /actuator/health`.
 
+## WebSocket (Fase 4)
+
+Conecta STOMP en `ws://localhost:8080/ws` y envía el JWT en el header nativo `Authorization` del frame `CONNECT`. El patrón de origen está en `app.websocket.allowed-origin-patterns`; para despliegues no locales, cámbialo a los orígenes permitidos.
+
 ## Pendientes
 
-- Fase 4: WebSocket/STOMP y publicación de eventos de tracking/notificación en tiempo real.
 - Fase 5: ruta OSRM opcional.
 - Fase 6: OpenAPI, colección Postman y utilidades de simulación.
-- Las ubicaciones se persisten desde Fase 2; la emisión de notificaciones en tiempo real queda para Fase 4.
+- El broker STOMP simple reside en memoria solo para transporte de mensajes; el estado persistente sigue en PostgreSQL.

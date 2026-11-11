@@ -21,6 +21,9 @@ public interface AlertDispatchRepository extends JpaRepository<AlertDispatchEnti
 
     Optional<AlertDispatchEntity> findByIdAndUnit_Id(UUID dispatchId, UUID unitId);
 
+    @EntityGraph(attributePaths = {"alert", "unit.user"})
+    Optional<AlertDispatchEntity> findWithAlertAndUnitUserById(UUID dispatchId);
+
     List<AlertDispatchEntity> findByAlert_IdAndStatus(UUID alertId, DispatchStatus status);
 
     long countByAlert_IdAndStatusAndExpiresAtAfter(UUID alertId, DispatchStatus status, Instant now);

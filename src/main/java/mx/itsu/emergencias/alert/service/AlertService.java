@@ -124,8 +124,10 @@ public class AlertService {
         alertRepository.save(alert);
 
         for (AlertDispatchEntityRef dispatch : offered) {
-            eventRepository.append(alertId, "DISPATCH_CANCELLED", citizenId,
-                    Map.of("dispatchId", dispatch.id().toString(), "reason", "ALERT_CANCELLED"));
+            Map<String, Object> cancellation = Map.of(
+                    "dispatchId", dispatch.id().toString(), "reason", "ALERT_CANCELLED");
+            eventRepository.append(alertId, "DISPATCH_CANCELLED", citizenId, cancellation);
+            domainEventPublisher.publish(alertId, "DISPATCH_CANCELLED", citizenId, cancellation);
         }
         eventRepository.append(alertId, "ALERT_CANCELLED", citizenId,
                 Map.of("cancelledOffers", cancelledOffers));

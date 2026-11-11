@@ -868,7 +868,107 @@ curl "$BASE_URL/actuator/health"
 
 ## 5. WebSocket
 
-No implementado en esta fase. Se documentará en Fase 4.
+**Estado:** Implementado (Fase 4). STOMP 1.2 sobre WebSocket, broker simple en memoria; los comandos continúan en REST.
+
+**URL de conexión:** `ws://localhost:8080/ws`.
+
+Autentica en el frame `CONNECT` mediante el header STOMP nativo `Authorization: Bearer <jwt>` (no como header HTTP del handshake). Si falta o no es válido, se rechaza la conexión. Ejemplo de frames STOMP (cada frame termina con NUL):
+
+```text
+CONNECT
+accept-version:1.2
+heart-beat:0,0
+Authorization:Bearer <jwt>
+
+\0
+
+SUBSCRIBE
+id:alerts
+destination:/user/queue/alerts
+ack:auto
+
+\0
+```
+
+**Autorización de suscripción:** `CITIZEN` puede escuchar `/user/queue/alerts` y `/topic/alerts/{id}` solo si la alerta pertenece a su cuenta; `UNIT` puede escuchar `/user/queue/dispatches` y el topic solo si tiene asignada esa alerta. Otros destinos y frames cliente `SEND` se rechazan.
+
+| Destino | Suscriptor | Mensaje |
+|---------|------------|---------|
+| `/user/queue/dispatches` | `UNIT` | `PendingDispatchResponse` al crear oferta, o `DispatchUpdateNotification` al cancelar/expirar. |
+| `/user/queue/alerts` | `CITIZEN` | `AlertStatusNotification` tras crear, aceptar, cancelar, llegar, resolver o expirar. |
+| `/topic/alerts/{alertId}` | Ciudadano dueño y unidad asignada | `AlertStatusNotification` y `UnitLocationUpdate` mientras la unidad está `EN_ROUTE`. |
+
+**Oferta — `PendingDispatchResponse`**
+```json
+{
+  "dispatchId": "f736d3e1-a714-43ad-9b7a-49f63fd295fa",
+  "alertId": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "type": "ROBBERY",
+  "requiredUnitType": "POLICE",
+  "description": "Asalto cerca del parque",
+  "latitude": 19.4167,
+  "longitude": -102.0667,
+  "round": 1,
+  "distanceMeters": 125.4,
+  "expiresAt": "2026-11-10T18:00:30Z"
+}
+```
+
+**Estado de alerta — `AlertStatusNotification`**
+```json
+{
+  "alertId": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "eventType": "ALERT_ACCEPTED",
+  "alert": {
+    "id": "62320253-f1bd-4466-a031-82dc997c7b96",
+    "type": "ROBBERY",
+    "requiredUnitType": "POLICE",
+    "description": "Asalto cerca del parque",
+    "latitude": 19.4167,
+    "longitude": -102.0667,
+    "status": "EN_ROUTE",
+    "dispatchRound": 1,
+    "createdAt": "2026-11-10T18:00:00Z",
+    "acceptedAt": "2026-11-10T18:00:08Z",
+    "arrivedAt": null,
+    "resolvedAt": null,
+    "cancelledAt": null,
+    "assignedUnit": {
+      "unitId": "27bab08f-c82e-4591-91b5-25ee14407a9e",
+      "unitType": "POLICE",
+      "identifier": "U-17",
+      "latitude": 19.417,
+      "longitude": -102.0664,
+      "heading": 90.0
+    }
+  },
+  "occurredAt": "2026-11-10T18:00:08Z"
+}
+```
+El objeto `alert` contiene el `AlertResponse` documentado arriba.
+
+**Tracking — `UnitLocationUpdate`**
+```json
+{
+  "alertId": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "unitId": "27bab08f-c82e-4591-91b5-25ee14407a9e",
+  "latitude": 19.417,
+  "longitude": -102.0664,
+  "heading": 90.0,
+  "speedKmh": 35.5,
+  "recordedAt": "2026-11-10T18:01:00Z"
+}
+```
+
+**Actualización de oferta — `DispatchUpdateNotification`**
+```json
+{
+  "dispatchId": "f736d3e1-a714-43ad-9b7a-49f63fd295fa",
+  "alertId": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "status": "CANCELLED",
+  "reason": "ALERT_ACCEPTED"
+}
+```
 
 ## 6. Flujo de ejemplo de punta a punta
 
@@ -926,7 +1026,7 @@ curl -X POST "$BASE_URL/api/alerts/$ALERT_ID/resolve" \
   -H "Authorization: Bearer $TOKEN_UNIDAD"
 ```
 
-Las notificaciones WebSocket/tracking en tiempo real se implementarán en la Fase 4; la ruta de navegación, en la Fase 5.
+El flujo REST de alertas, aceptación, llegada y resolución está implementado arriba; al aceptar, el ciudadano y la unidad suscritos reciben estado y tracking por WebSocket. La ruta de navegación queda para la Fase 5.
 
 ## 7. Changelog
 
@@ -934,3 +1034,4 @@ Las notificaciones WebSocket/tracking en tiempo real se implementarán en la Fas
 - 2026-11-09 — Fase 1: documentados registro de ciudadano/unidad, login y consulta de perfil.
 - 2026-11-09 — Fase 2: documentados estado, ubicación simple/batch idempotente y búsqueda anónima de unidades cercanas.
 - 2026-11-10 — Fase 3: documentados creación/cancelación/transiciones de alertas y operaciones de despacho.
+- 2026-11-10 — Fase 4: documentados conexión STOMP/JWT, destinos autorizados y mensajes de oferta, estado y tracking.

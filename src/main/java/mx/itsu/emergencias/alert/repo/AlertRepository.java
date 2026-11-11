@@ -22,6 +22,10 @@ public interface AlertRepository extends JpaRepository<AlertEntity, UUID> {
     Optional<AlertEntity> findFirstByCitizenIdAndStatusInOrderByCreatedAtDesc(
             UUID citizenId, List<AlertStatus> statuses);
 
+    Optional<AlertEntity> findFirstByAssignedUnit_IdAndStatus(UUID unitId, AlertStatus status);
+
+    Optional<AlertEntity> findFirstByAssignedUnit_IdAndStatusIn(UUID unitId, List<AlertStatus> statuses);
+
     @EntityGraph(attributePaths = {"assignedUnit", "citizen"})
     @Query("select a from AlertEntity a where a.id = :id")
     Optional<AlertEntity> findWithAssignedUnitById(@Param("id") UUID id);

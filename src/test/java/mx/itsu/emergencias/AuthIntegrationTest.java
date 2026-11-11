@@ -17,17 +17,20 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -364,6 +367,64 @@ class AuthIntegrationTest {
                 Integer.class, alertId));
     }
 
+    @Test
+    void citizenReceivesAlertStateAndUnitTrackingOverAuthenticatedStomp() throws Exception {
+        double latitude = -12.3456;
+        double longitude = 112.3456;
+        UnitAccount unit = registerAvailableUnit("POLICE", latitude, longitude);
+        String citizenToken = registerCitizenAndLogin();
+        try (RawStompClient unitStomp = RawStompClient.connect(port, unit.token());
+             RawStompClient citizenStomp = RawStompClient.connect(port, citizenToken)) {
+            unitStomp.subscribe("/user/queue/dispatches", "unit-dispatches");
+            citizenStomp.subscribe("/user/queue/alerts", "citizen-alerts");
+
+            HttpResponse<String> created = createAlert(citizenToken, "ROBBERY", latitude, longitude);
+            assertEquals(201, created.statusCode());
+            UUID alertId = UUID.fromString(jsonValue(created.body(), "id"));
+            citizenStomp.subscribe("/topic/alerts/" + alertId, "alert-tracking");
+            String createdNotification = citizenStomp.awaitContaining("ALERT_CREATED", 10);
+            assertTrue(createdNotification.contains(alertId.toString()));
+            String offerNotification = unitStomp.awaitContaining(alertId.toString(), 10);
+            String dispatchId = jsonValue(offerNotification, "dispatchId");
+
+            HttpResponse<String> accepted = request("POST", "/api/dispatches/" + dispatchId + "/accept",
+                    null, unit.token());
+            assertEquals(200, accepted.statusCode());
+            assertTrue(citizenStomp.awaitContaining("ALERT_ACCEPTED", 10).contains("ALERT_ACCEPTED"));
+
+            Instant recordedAt = Instant.now();
+            UUID eventId = UUID.randomUUID();
+            HttpResponse<String> location = request("POST", "/api/units/me/location",
+                    locationJson(eventId, latitude + 0.001, longitude + 0.001, recordedAt), unit.token());
+            assertEquals(200, location.statusCode());
+            assertTrue(citizenStomp.awaitContaining(recordedAt.toString(), 10).contains(unit.unitId().toString()));
+            assertEquals(alertId, jdbcTemplate.queryForObject(
+                    "select alert_id from unit_location_history where event_id = ?", UUID.class, eventId));
+        }
+    }
+
+    @Test
+    void stompClientCannotSubscribeToAnotherCitizensAlert() throws Exception {
+        String ownerToken = registerCitizenAndLogin();
+        HttpResponse<String> created = createAlert(ownerToken, "MEDICAL", 40.0, -120.0);
+        assertEquals(201, created.statusCode());
+        UUID alertId = UUID.fromString(jsonValue(created.body(), "id"));
+        String otherCitizenToken = registerCitizenAndLogin();
+
+        try (RawStompClient stomp = RawStompClient.connect(port, otherCitizenToken)) {
+            stomp.send("SUBSCRIBE\nid:unauthorized\ndestination:/topic/alerts/" + alertId + "\nack:auto\n\n");
+            assertTrue(stomp.awaitErrorFrame(10).startsWith("ERROR"));
+        }
+    }
+
+    @Test
+    void stompConnectWithoutJwtIsRejected() throws Exception {
+        try (RawStompClient stomp = RawStompClient.open(port)) {
+            stomp.send("CONNECT\naccept-version:1.2\nheart-beat:0,0\n\n");
+            assertTrue(stomp.awaitErrorFrame(10).startsWith("ERROR"));
+        }
+    }
+
     private UnitAccount registerUnitAndLogin() throws Exception {
         String email = "phase2-unit-" + UUID.randomUUID() + "@example.com";
         HttpResponse<String> registration = request("POST", "/api/auth/register/unit", """
@@ -455,5 +516,82 @@ class AuthIntegrationTest {
                 ? HttpRequest.BodyPublishers.noBody()
                 : HttpRequest.BodyPublishers.ofString(body);
         return httpClient.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static final class RawStompClient implements WebSocket.Listener, AutoCloseable {
+        private final LinkedBlockingQueue<String> frames = new LinkedBlockingQueue<>();
+        private final StringBuilder fragments = new StringBuilder();
+        private WebSocket socket;
+
+        static RawStompClient connect(int port, String token) throws Exception {
+            RawStompClient client = open(port);
+            client.send("CONNECT\naccept-version:1.2\nheart-beat:0,0\nAuthorization:Bearer "
+                    + token + "\n\n");
+            assertTrue(client.awaitContaining("CONNECTED", 10).contains("CONNECTED"));
+            return client;
+        }
+
+        static RawStompClient open(int port) throws Exception {
+            RawStompClient client = new RawStompClient();
+            HttpClient httpClient = HttpClient.newHttpClient();
+            client.socket = httpClient.newWebSocketBuilder()
+                    .subprotocols("v12.stomp")
+                    .buildAsync(URI.create("ws://localhost:" + port + "/ws"), client)
+                    .get(10, TimeUnit.SECONDS);
+            return client;
+        }
+
+        void subscribe(String destination, String id) throws Exception {
+            send("SUBSCRIBE\nid:" + id + "\ndestination:" + destination + "\nack:auto\n\n");
+        }
+
+        void send(String frame) throws Exception {
+            socket.sendText(frame + '\0', true).get(10, TimeUnit.SECONDS);
+        }
+
+        String awaitContaining(String expected, int timeoutSeconds) throws Exception {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+            while (System.nanoTime() < deadline) {
+                String frame = frames.poll(1, TimeUnit.SECONDS);
+                if (frame == null) continue;
+                if (frame.startsWith("ERROR")) throw new AssertionError("STOMP ERROR frame received");
+                if (frame.contains(expected)) return frame;
+            }
+            throw new AssertionError("Timed out waiting for STOMP content: " + expected);
+        }
+
+        String awaitErrorFrame(int timeoutSeconds) throws Exception {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+            while (System.nanoTime() < deadline) {
+                String frame = frames.poll(1, TimeUnit.SECONDS);
+                if (frame != null && frame.startsWith("ERROR")) return frame;
+            }
+            throw new AssertionError("Timed out waiting for STOMP ERROR frame");
+        }
+
+        @Override
+        public void onOpen(WebSocket webSocket) {
+            webSocket.request(1);
+        }
+
+        @Override
+        public CompletableFuture<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+            synchronized (fragments) {
+                fragments.append(data);
+                if (last) {
+                    frames.offer(fragments.toString());
+                    fragments.setLength(0);
+                }
+            }
+            webSocket.request(1);
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public void close() throws Exception {
+            if (socket != null && !socket.isOutputClosed()) {
+                socket.sendClose(WebSocket.NORMAL_CLOSURE, "test complete").get(5, TimeUnit.SECONDS);
+            }
+        }
     }
 }

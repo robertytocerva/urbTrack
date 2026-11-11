@@ -108,8 +108,10 @@ public class AlertDispatchService {
         int cancelled = dispatchRepository.cancelOtherOffers(alertId, dispatchId);
         for (AlertDispatchEntity other : otherOffers) {
             if (!other.getId().equals(dispatchId)) {
-                eventRepository.append(alertId, "DISPATCH_CANCELLED", userId,
-                        Map.of("dispatchId", other.getId().toString(), "reason", "ALERT_ACCEPTED"));
+                Map<String, Object> cancellation = Map.of(
+                        "dispatchId", other.getId().toString(), "reason", "ALERT_ACCEPTED");
+                eventRepository.append(alertId, "DISPATCH_CANCELLED", userId, cancellation);
+                domainEventPublisher.publish(alertId, "DISPATCH_CANCELLED", userId, cancellation);
             }
         }
         eventRepository.append(alertId, "ALERT_ACCEPTED", userId, Map.of(

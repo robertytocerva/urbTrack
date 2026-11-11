@@ -50,3 +50,5 @@ app:
     expiration-scan-ms: 5000
   location:
     max-future-seconds: 60
+  websocket:
+    allowed-origin-patterns: "*"
