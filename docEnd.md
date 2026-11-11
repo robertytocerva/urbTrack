@@ -36,6 +36,8 @@
 | 409 | `DISPATCH_NOT_OFFERED` | La oferta ya expiró, fue respondida o cancelada. |
 | 409 | `UNIT_NOT_AVAILABLE` | La unidad dejó de estar disponible para aceptar. |
 | 409 | `UNIT_ALREADY_ASSIGNED` | La unidad ya tiene una alerta activa. |
+| 409 | `ROUTE_NOT_AVAILABLE` | La alerta no está `EN_ROUTE`. |
+| 409 | `UNIT_LOCATION_UNAVAILABLE` | La unidad asignada todavía no reporta ubicación. |
 | 405 | `METHOD_NOT_ALLOWED` | Método HTTP no permitido para la ruta. |
 | 500 | `INTERNAL_ERROR` | Error inesperado. |
 
@@ -54,13 +56,13 @@
 - `POST /api/units/me/locations/batch`
 - `POST /api/alerts`
 - `GET /api/alerts/active`
+- `GET /api/alerts/{id}/route`
 - `POST /api/alerts/{id}/cancel`
 - `POST /api/alerts/{id}/arrive`
 - `POST /api/alerts/{id}/resolve`
 - `GET /api/dispatches/pending`
 - `POST /api/dispatches/{id}/accept`
 - `POST /api/dispatches/{id}/reject`
-- Ruta de alerta: sin endpoint implementado todavía (Fase 5).
 
 ### Operación
 - `GET /actuator/health`
@@ -597,6 +599,67 @@ curl -X POST "$BASE_URL/api/alerts" \
 curl "$BASE_URL/api/alerts/active" -H "Authorization: Bearer $TOKEN"
 ```
 
+### GET /api/alerts/{id}/route
+
+**Descripción:** Obtiene la ruta de la unidad asignada hacia la alerta usando OSRM (`router.project-osrm.org`). Si OSRM no responde, no encuentra ruta o devuelve datos inválidos, entrega una línea recta entre la última ubicación conocida de la unidad y la alerta, con `fallback: true`.
+**Rol requerido:** `CITIZEN` propietario de la alerta.
+**Estado:** Implementado (Fase 5).
+
+**Headers**
+| Header | Valor |
+|--------|-------|
+| Authorization | `Bearer <jwt>` |
+
+**Parámetros de ruta / query**
+| Parámetro | Tipo | Obligatorio | Reglas |
+|-----------|------|-------------|--------|
+| id | UUID | Sí | ID de una alerta propia en estado `EN_ROUTE`. |
+
+**Body:** Ninguno.
+
+**Respuesta exitosa — 200 OK (OSRM)**
+```json
+{
+  "alertId": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "coordinates": [
+    { "latitude": 19.417, "longitude": -102.0664 },
+    { "latitude": 19.4167, "longitude": -102.0667 }
+  ],
+  "distanceMeters": 1240.5,
+  "durationSeconds": 180.2,
+  "fallback": false
+}
+```
+
+**Respuesta exitosa — 200 OK (fallback)**
+```json
+{
+  "alertId": "62320253-f1bd-4466-a031-82dc997c7b96",
+  "coordinates": [
+    { "latitude": 19.417, "longitude": -102.0664 },
+    { "latitude": 19.4167, "longitude": -102.0667 }
+  ],
+  "distanceMeters": 44.9,
+  "durationSeconds": null,
+  "fallback": true
+}
+```
+
+**Errores posibles**
+| HTTP | code | Cuándo ocurre |
+|------|------|---------------|
+| 401 | `UNAUTHORIZED` | Token ausente o inválido. |
+| 403 | `FORBIDDEN` | La alerta pertenece a otro ciudadano o el rol no es `CITIZEN`. |
+| 404 | `NOT_FOUND` | La alerta no existe. |
+| 409 | `ROUTE_NOT_AVAILABLE` | La alerta no está en `EN_ROUTE`. |
+| 409 | `UNIT_LOCATION_UNAVAILABLE` | La unidad asignada aún no tiene ubicación registrada. |
+
+**Ejemplo curl**
+```bash
+curl "$BASE_URL/api/alerts/62320253-f1bd-4466-a031-82dc997c7b96/route" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ### POST /api/alerts/{id}/cancel
 
 **Descripción:** Cancela la alerta propia en estado `PENDING` o `EN_ROUTE`; libera la unidad asignada si la hubiera y cancela las ofertas vigentes.
@@ -731,7 +794,7 @@ curl "$BASE_URL/api/dispatches/pending" -H "Authorization: Bearer $TOKEN"
   }
 }
 ```
-La ruta de navegación queda para la Fase 5.
+La ruta se consulta por `GET /api/alerts/{id}/route`.
 
 **Errores posibles**
 | HTTP | code | Cuándo ocurre |
@@ -1019,6 +1082,9 @@ curl -X POST "$BASE_URL/api/dispatches/$DISPATCH_ID/accept" \
 
 curl "$BASE_URL/api/alerts/active" -H "Authorization: Bearer $TOKEN_CIUDADANO"
 
+curl "$BASE_URL/api/alerts/$ALERT_ID/route" \
+  -H "Authorization: Bearer $TOKEN_CIUDADANO"
+
 curl -X POST "$BASE_URL/api/alerts/$ALERT_ID/arrive" \
   -H "Authorization: Bearer $TOKEN_UNIDAD"
 
@@ -1026,7 +1092,7 @@ curl -X POST "$BASE_URL/api/alerts/$ALERT_ID/resolve" \
   -H "Authorization: Bearer $TOKEN_UNIDAD"
 ```
 
-El flujo REST de alertas, aceptación, llegada y resolución está implementado arriba; al aceptar, el ciudadano y la unidad suscritos reciben estado y tracking por WebSocket. La ruta de navegación queda para la Fase 5.
+El flujo REST de alertas, aceptación, llegada, ruta y resolución está implementado arriba; al aceptar, el ciudadano y la unidad suscritos reciben estado y tracking por WebSocket.
 
 ## 7. Changelog
 
@@ -1035,3 +1101,4 @@ El flujo REST de alertas, aceptación, llegada y resolución está implementado 
 - 2026-11-09 — Fase 2: documentados estado, ubicación simple/batch idempotente y búsqueda anónima de unidades cercanas.
 - 2026-11-10 — Fase 3: documentados creación/cancelación/transiciones de alertas y operaciones de despacho.
 - 2026-11-10 — Fase 4: documentados conexión STOMP/JWT, destinos autorizados y mensajes de oferta, estado y tracking.
+- 2026-11-10 — Fase 5: documentada la consulta de ruta OSRM con fallback lineal.

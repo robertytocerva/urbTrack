@@ -24,8 +24,9 @@ La aplicación ejecuta Flyway al arrancar y Hibernate valida el esquema existent
 
 Conecta STOMP en `ws://localhost:8080/ws` y envía el JWT en el header nativo `Authorization` del frame `CONNECT`. El patrón de origen está en `app.websocket.allowed-origin-patterns`; para despliegues no locales, cámbialo a los orígenes permitidos.
 
+Las rutas de alertas (`GET /api/alerts/{id}/route`) usan el servicio demo de OSRM configurado en `app.routing.osrm-base-url`; no tiene garantía de disponibilidad. Si falla, la API responde con la línea recta y `fallback: true`.
+
 ## Pendientes
 
-- Fase 5: ruta OSRM opcional.
 - Fase 6: OpenAPI, colección Postman y utilidades de simulación.
 - El broker STOMP simple reside en memoria solo para transporte de mensajes; el estado persistente sigue en PostgreSQL.

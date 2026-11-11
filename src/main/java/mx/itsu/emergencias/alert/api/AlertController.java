@@ -2,6 +2,8 @@ package mx.itsu.emergencias.alert.api;
 
 import jakarta.validation.Valid;
 import mx.itsu.emergencias.alert.service.AlertService;
+import mx.itsu.emergencias.routing.api.RouteResponse;
+import mx.itsu.emergencias.routing.service.AlertRoutingService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -20,9 +22,11 @@ import java.util.UUID;
 public class AlertController {
 
     private final AlertService alertService;
+    private final AlertRoutingService routingService;
 
-    public AlertController(AlertService alertService) {
+    public AlertController(AlertService alertService, AlertRoutingService routingService) {
         this.alertService = alertService;
+        this.routingService = routingService;
     }
 
     @PostMapping
@@ -50,6 +54,11 @@ public class AlertController {
     @PostMapping("/{alertId}/resolve")
     public AlertResponse resolve(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID alertId) {
         return alertService.resolve(alertId, userId(jwt));
+    }
+
+    @GetMapping("/{alertId}/route")
+    public RouteResponse route(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID alertId) {
+        return routingService.route(alertId, userId(jwt));
     }
 
     private UUID userId(Jwt jwt) {

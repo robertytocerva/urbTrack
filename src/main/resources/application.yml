@@ -52,3 +52,7 @@ app:
     max-future-seconds: 60
   websocket:
     allowed-origin-patterns: "*"
+  routing:
+    osrm-base-url: https://router.project-osrm.org
+    connect-timeout-ms: 2000
+    read-timeout-ms: 5000

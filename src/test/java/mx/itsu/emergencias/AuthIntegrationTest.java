@@ -6,9 +6,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import mx.itsu.emergencias.dispatch.service.DispatchExpirationScheduler;
+import mx.itsu.emergencias.common.geo.GeoPoint;
+import mx.itsu.emergencias.routing.service.OsrmRoute;
+import mx.itsu.emergencias.routing.service.OsrmRouteClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -34,6 +38,8 @@ import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -62,6 +68,9 @@ class AuthIntegrationTest {
 
     @Autowired
     private DispatchExpirationScheduler dispatchExpirationScheduler;
+
+    @MockitoBean
+    private OsrmRouteClient osrmRouteClient;
 
     @Test
     void flywayAppliesVersionOneSchema() {
@@ -425,6 +434,37 @@ class AuthIntegrationTest {
         }
     }
 
+    @Test
+    void routeUsesOsrmAndFallsBackToStraightLineWhenUnavailable() throws Exception {
+        double latitude = 19.4167;
+        double longitude = -102.0667;
+        UnitAccount unit = registerAvailableUnit("POLICE", latitude, longitude);
+        String citizenToken = registerCitizenAndLogin();
+        HttpResponse<String> created = createAlert(citizenToken, "ROBBERY", latitude, longitude);
+        UUID alertId = UUID.fromString(jsonValue(created.body(), "id"));
+        HttpResponse<String> pending = request("GET", "/api/dispatches/pending", null, unit.token());
+        String dispatchId = jsonValue(pending.body(), "dispatchId");
+        assertEquals(200, request("POST", "/api/dispatches/" + dispatchId + "/accept", null,
+                unit.token()).statusCode());
+
+        when(osrmRouteClient.findRoute(any(GeoPoint.class), any(GeoPoint.class)))
+                .thenReturn(java.util.Optional.of(new OsrmRoute(List.of(
+                        new GeoPoint(latitude, longitude),
+                        new GeoPoint(latitude + 0.001, longitude + 0.001)), 1234.5, 85.0)),
+                        java.util.Optional.empty());
+
+        HttpResponse<String> osrm = request("GET", "/api/alerts/" + alertId + "/route", null, citizenToken);
+        assertEquals(200, osrm.statusCode());
+        assertTrue(osrm.body().contains("\"fallback\":false"));
+        assertTrue(osrm.body().contains("\"distanceMeters\":1234.5"));
+
+        HttpResponse<String> fallback = request("GET", "/api/alerts/" + alertId + "/route", null, citizenToken);
+        assertEquals(200, fallback.statusCode());
+        assertTrue(fallback.body().contains("\"fallback\":true"));
+        assertTrue(fallback.body().contains("\"durationSeconds\":null"));
+        assertTrue(fallback.body().contains("\"coordinates\":[{"));
+    }
+
     private UnitAccount registerUnitAndLogin() throws Exception {
         String email = "phase2-unit-" + UUID.randomUUID() + "@example.com";
         HttpResponse<String> registration = request("POST", "/api/auth/register/unit", """
@@ -588,9 +628,13 @@ class AuthIntegrationTest {
         }
 
         @Override
-        public void close() throws Exception {
+        public void close() {
             if (socket != null && !socket.isOutputClosed()) {
-                socket.sendClose(WebSocket.NORMAL_CLOSURE, "test complete").get(5, TimeUnit.SECONDS);
+                try {
+                    socket.sendClose(WebSocket.NORMAL_CLOSURE, "test complete").get(5, TimeUnit.SECONDS);
+                } catch (Exception ignored) {
+                    // The STOMP server may already close a rejected CONNECT session.
+                }
             }
         }
     }
